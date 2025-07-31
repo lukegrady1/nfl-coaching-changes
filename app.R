@@ -7,7 +7,7 @@ library(tidyverse)
 library(networkD3)
 library(bslib)
 
-#── 1. Load & wrangle data once
+#── 1. Load & wrangle data
 coaches_2024 <- read_csv("data/coaches_2024.csv")
 coaches_2025 <- read_csv("data/coaches_2025.csv")
 
@@ -25,9 +25,13 @@ long25 <- coaches_2025 %>%
     values_to = "coach_2025"
   )
 
-all_flows <- long24 %>%
-  inner_join(long25, by = c("team", "role")) %>%
-  count(coach_2024, coach_2025, role, name = "value")
+# keep team through the join so we can order by it later
+flow_raw <- long24 %>%
+  inner_join(long25, by = c("team", "role"))
+
+# aggregate counts (in case coaches repeat across roles)
+all_flows <- flow_raw %>%
+  count(team, coach_2024, coach_2025, role, name = "value")
 
 #── 2. D3 color scale for roles
 colourScale <- JS('d3.scaleOrdinal()
@@ -60,16 +64,16 @@ ui <- navbarPage(
           selected = "All"
         ),
         tags$p(class = "small",
-               "Hover over flows or nodes for details. Coach names are auto-wrapped.")
+               "Hover over flows or nodes for details. Coaches are grouped by team order.")
       ),
       mainPanel(
         width = 9,
-        # Labels above the Sankey
+        # ← side‐labels for clarity
         tags$div(
           style = "display: flex;
                    justify-content: space-between;
-                   margin-bottom: -10px;
-                   font-weight: bold;",
+                   font-weight: bold;
+                   margin-bottom: -10px;",
           tags$span("2024 Coaches"),
           tags$span("2025 Coaches")
         ),
@@ -82,7 +86,7 @@ ui <- navbarPage(
 #── 4. Server ───────────────────────────────────────────────────────────
 server <- function(input, output, session) {
 
-  # Filter by role if requested
+  # filter by role if requested
   flows <- reactive({
     if (input$role == "All") {
       all_flows
@@ -91,29 +95,46 @@ server <- function(input, output, session) {
     }
   })
 
-  # Build nodes & links (with wrapped labels)
+  # build nodes & links with team‐based ordering
   sankeyData <- reactive({
     df <- flows()
+
+    # helper to wrap long names
     wrap_name <- function(x) str_wrap(x, width = 15)
 
+    # get coaches in 2024 sorted by team
+    left_coaches <- df %>%
+      arrange(team) %>%
+      distinct(coach_2024) %>%
+      pull(coach_2024)
+
+    # get coaches in 2025 sorted by team
+    right_coaches <- df %>%
+      arrange(team) %>%
+      distinct(coach_2025) %>%
+      pull(coach_2025)
+
+    # combine, preserving left-first, then any new right‐side coaches
+    all_coaches <- unique(c(left_coaches, right_coaches))
+
+    # create the node list with wrapped labels
     nodes <- data.frame(
-      name = unique(c(df$coach_2024, df$coach_2025)) %>% wrap_name(),
+      name = wrap_name(all_coaches),
       stringsAsFactors = FALSE
     )
 
+    # build the link table with zero-based indices
     links <- df %>%
       mutate(
-        coach_2024 = wrap_name(coach_2024),
-        coach_2025 = wrap_name(coach_2025),
-        source     = match(coach_2024, nodes$name) - 1,
-        target     = match(coach_2025, nodes$name) - 1
+        source = match(coach_2024, all_coaches) - 1,
+        target = match(coach_2025, all_coaches) - 1
       ) %>%
       select(source, target, value, role)
 
     list(nodes = nodes, links = links)
   })
 
-  # Render the Sankey
+  # render the Sankey
   output$sankeyPlot <- renderSankeyNetwork({
     dat <- sankeyData()
 
@@ -124,7 +145,7 @@ server <- function(input, output, session) {
       Target      = "target",
       Value       = "value",
       NodeID      = "name",
-      LinkGroup   = "role",        # color by role
+      LinkGroup   = "role",
       colourScale = colourScale,
       fontSize    = 11,
       fontFamily  = "Roboto",
@@ -135,5 +156,5 @@ server <- function(input, output, session) {
   })
 }
 
-# Launch the app
+# launch the app
 shinyApp(ui, server)
