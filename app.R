@@ -56,19 +56,12 @@ ui <- navbarPage(
     sidebarLayout(
       sidebarPanel(
         width = 3,
-        tags$h4("Filter by role"),
-        selectInput(
-          inputId = "role",
-          label   = NULL,
-          choices = c("All", "head_coach", "offensive_coordinator", "defensive_coordinator"),
-          selected = "All"
-        ),
+        tags$h4("NFL Coaching Changes"),
         tags$p(class = "small",
                "Hover over flows or nodes for details. Coaches are grouped by team order.")
       ),
       mainPanel(
         width = 9,
-        # ← side‐labels for clarity
         tags$div(
           style = "display: flex;
                    justify-content: space-between;
@@ -77,7 +70,7 @@ ui <- navbarPage(
           tags$span("2024 Coaches"),
           tags$span("2025 Coaches")
         ),
-        sankeyNetworkOutput("sankeyPlot", height = "650px")
+        sankeyNetworkOutput("sankeyPlot", height = "1200px")
       )
     )
   )
@@ -86,55 +79,45 @@ ui <- navbarPage(
 #── 4. Server ───────────────────────────────────────────────────────────
 server <- function(input, output, session) {
 
-  # filter by role if requested
+  # No filtering, always show all flows
   flows <- reactive({
-    if (input$role == "All") {
-      all_flows
-    } else {
-      all_flows %>% filter(role == input$role)
-    }
+    all_flows
   })
 
-  # build nodes & links with team‐based ordering
   sankeyData <- reactive({
     df <- flows()
 
-    # helper to wrap long names
     wrap_name <- function(x) str_wrap(x, width = 15)
 
-    # get coaches in 2024 sorted by team
-    left_coaches <- df %>%
-      arrange(team) %>%
-      distinct(coach_2024) %>%
-      pull(coach_2024)
+    # Always keep team order for both sides, all roles
+    left_nodes <- long24 %>%
+      arrange(team, role) %>%
+      mutate(node = paste(team, "(2024):", coach_2024, "-", role)) %>%
+      distinct(node, team, coach_2024, role)
 
-    # get coaches in 2025 sorted by team
-    right_coaches <- df %>%
-      arrange(team) %>%
-      distinct(coach_2025) %>%
-      pull(coach_2025)
+    right_nodes <- long25 %>%
+      arrange(team, role) %>%
+      mutate(node = paste(team, "(2025):", coach_2025, "-", role)) %>%
+      distinct(node, team, coach_2025, role)
 
-    # combine, preserving left-first, then any new right‐side coaches
-    all_coaches <- unique(c(left_coaches, right_coaches))
+    all_nodes <- bind_rows(left_nodes, right_nodes) %>%
+      distinct(node, .keep_all = TRUE)
 
-    # create the node list with wrapped labels
     nodes <- data.frame(
-      name = wrap_name(all_coaches),
+      name = wrap_name(all_nodes$node),
       stringsAsFactors = FALSE
     )
 
-    # build the link table with zero-based indices
     links <- df %>%
       mutate(
-        source = match(coach_2024, all_coaches) - 1,
-        target = match(coach_2025, all_coaches) - 1
+        source = match(paste(team, "(2024):", coach_2024, "-", role), all_nodes$node) - 1,
+        target = match(paste(team, "(2025):", coach_2025, "-", role), all_nodes$node) - 1
       ) %>%
       select(source, target, value, role)
 
     list(nodes = nodes, links = links)
   })
 
-  # render the Sankey
   output$sankeyPlot <- renderSankeyNetwork({
     dat <- sankeyData()
 
@@ -147,11 +130,11 @@ server <- function(input, output, session) {
       NodeID      = "name",
       LinkGroup   = "role",
       colourScale = colourScale,
-      fontSize    = 11,
+      fontSize    = 10,
       fontFamily  = "Roboto",
-      nodeWidth   = 20,
-      nodePadding = 15,
-      margin      = list(top = 20, right = 20, bottom = 20, left = 20)
+      nodeWidth   = 25,
+      nodePadding = 20,
+      margin      = list(top = 80, right = 80, bottom = 80, left = 80)
     )
   })
 }
